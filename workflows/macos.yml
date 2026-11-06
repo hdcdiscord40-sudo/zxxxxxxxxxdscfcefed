@@ -1,0 +1,293 @@
+name: Multi-OS Electron Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      webhook:
+        description: 'Webhook URL to send the compiled link to'
+        required: true
+        type: string
+      filename:
+        description: 'Name of the compiled file (product name)'
+        required: false
+        default: 'konu_electron'
+        type: string
+      target_os:
+        description: 'Target Operating System'
+        required: true
+        default: 'windows'
+        type: choice
+        options:
+          - windows
+          - macos
+          - linux
+
+jobs:
+  build-windows:
+    if: ${{ github.event.inputs.target_os == 'windows' }}
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run Obfuscation
+        run: node builder/scripts/obfuscate.js ./
+
+      - name: Update package.json Build Settings
+        shell: bash
+        run: |
+          node -e '
+            const fs = require("fs");
+            const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            const filename = "${{ github.event.inputs.filename }}";
+            
+            pkg.name = filename.toLowerCase().replace(/[^a-z0-9-_]/g, "");
+            pkg.productName = filename;
+            pkg.main = "index.js";
+            pkg.version = "1.0.0";
+            
+            pkg.build = {
+              appId: "com.konu." + pkg.name,
+              productName: filename,
+              electronVersion: "43.4.1",
+              npmRebuild: false,
+              directories: { output: "dist" },
+              files: ["**/*", "!dist/**", "!node_modules/electron/**", "!node_modules/electron-builder/**"]
+            };
+            
+            pkg.build.win = { target: [{ target: "portable", arch: ["x64"] }] };
+            pkg.build.portable = { artifactName: filename + ".exe", requestExecutionLevel: "user" };
+            
+            fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2));
+          '
+
+      - name: Prune Development Dependencies
+        run: npm prune --production
+
+      - name: Compile Application
+        run: npx electron-builder --win --x64
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Package and Upload to GoFile
+        shell: bash
+        run: |
+          FILENAME="${{ github.event.inputs.filename }}"
+          FILE_PATH=$(find dist -name "*.exe" | head -n 1)
+          
+          if [ -z "$FILE_PATH" ] || [ ! -f "$FILE_PATH" ]; then
+            echo "Error: Output binary not found."
+            exit 1
+          fi
+          
+          zip -j "$FILENAME.zip" "$FILE_PATH"
+          
+          echo "Uploading $FILENAME.zip to GoFile..."
+          RESPONSE=$(curl -F "file=@$FILENAME.zip" https://upload.gofile.io/uploadfile)
+          echo "Response: $RESPONSE"
+          
+          DOWNLOAD_URL=$(echo $RESPONSE | node -e '
+            const fs = require("fs");
+            const data = JSON.parse(fs.readFileSync(0, "utf-8"));
+            if (data.status === "ok") {
+              console.log(data.data.downloadPage);
+            } else {
+              process.exit(1);
+            }
+          ')
+          
+          if [ -z "$DOWNLOAD_URL" ]; then
+            echo "Upload failed."
+            exit 1
+          fi
+          
+          curl -H "Content-Type: application/json" -d "{\"content\": \"**Build Success!**\nTarget: windows\nDownload link: $DOWNLOAD_URL\"}" "${{ github.event.inputs.webhook }}"
+
+  build-macos:
+    if: ${{ github.event.inputs.target_os == 'macos' }}
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run Obfuscation
+        run: node builder/scripts/obfuscate.js ./
+
+      - name: Update package.json Build Settings
+        shell: bash
+        run: |
+          node -e '
+            const fs = require("fs");
+            const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            const filename = "${{ github.event.inputs.filename }}";
+            
+            pkg.name = filename.toLowerCase().replace(/[^a-z0-9-_]/g, "");
+            pkg.productName = filename;
+            pkg.main = "index.js";
+            pkg.version = "1.0.0";
+            
+            pkg.build = {
+              appId: "com.konu." + pkg.name,
+              productName: filename,
+              electronVersion: "43.4.1",
+              npmRebuild: false,
+              directories: { output: "dist" },
+              files: ["**/*", "!dist/**", "!node_modules/electron/**", "!node_modules/electron-builder/**"]
+            };
+            
+            pkg.build.mac = { target: ["zip"], category: "public.app-category.utilities" };
+            
+            fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2));
+          '
+
+      - name: Prune Development Dependencies
+        run: npm prune --production
+
+      # Windows-only native module; omit from macOS app bundle (Keychain path is used at runtime).
+      - name: Remove Windows-only optional dependencies
+        run: npm uninstall --no-save @primno/dpapi || rm -rf node_modules/@primno/dpapi
+
+      - name: Compile Application
+        run: npx electron-builder --mac --x64
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Package and Upload to GoFile
+        shell: bash
+        run: |
+          FILENAME="${{ github.event.inputs.filename }}"
+          FILE_PATH=$(find dist -name "*.zip" | head -n 1)
+          
+          if [ -z "$FILE_PATH" ] || [ ! -f "$FILE_PATH" ]; then
+            echo "Error: Output binary not found."
+            exit 1
+          fi
+          
+          cp "$FILE_PATH" "$FILENAME.zip"
+          
+          echo "Uploading $FILENAME.zip to GoFile..."
+          RESPONSE=$(curl -F "file=@$FILENAME.zip" https://upload.gofile.io/uploadfile)
+          echo "Response: $RESPONSE"
+          
+          DOWNLOAD_URL=$(echo $RESPONSE | node -e '
+            const fs = require("fs");
+            const data = JSON.parse(fs.readFileSync(0, "utf-8"));
+            if (data.status === "ok") {
+              console.log(data.data.downloadPage);
+            } else {
+              process.exit(1);
+            }
+          ')
+          
+          if [ -z "$DOWNLOAD_URL" ]; then
+            echo "Upload failed."
+            exit 1
+          fi
+          
+          curl -H "Content-Type: application/json" -d "{\"content\": \"**Build Success!**\nTarget: macos\nDownload link: $DOWNLOAD_URL\"}" "${{ github.event.inputs.webhook }}"
+
+  build-linux:
+    if: ${{ github.event.inputs.target_os == 'linux' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run Obfuscation
+        run: node builder/scripts/obfuscate.js ./
+
+      - name: Update package.json Build Settings
+        shell: bash
+        run: |
+          node -e '
+            const fs = require("fs");
+            const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            const filename = "${{ github.event.inputs.filename }}";
+            
+            pkg.name = filename.toLowerCase().replace(/[^a-z0-9-_]/g, "");
+            pkg.productName = filename;
+            pkg.main = "index.js";
+            pkg.version = "1.0.0";
+            
+            pkg.build = {
+              appId: "com.konu." + pkg.name,
+              productName: filename,
+              electronVersion: "43.4.1",
+              npmRebuild: false,
+              directories: { output: "dist" },
+              files: ["**/*", "!dist/**", "!node_modules/electron/**", "!node_modules/electron-builder/**"]
+            };
+            
+            pkg.build.linux = { target: ["tar.gz"], category: "Utility" };
+            
+            fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2));
+          '
+
+      - name: Prune Development Dependencies
+        run: npm prune --production
+
+      - name: Compile Application
+        run: npx electron-builder --linux --x64
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Package and Upload to GoFile
+        shell: bash
+        run: |
+          FILENAME="${{ github.event.inputs.filename }}"
+          FILE_PATH=$(find dist -name "*.tar.gz" | head -n 1)
+          
+          if [ -z "$FILE_PATH" ] || [ ! -f "$FILE_PATH" ]; then
+            echo "Error: Output binary not found."
+            exit 1
+          fi
+          
+          zip -j "$FILENAME.zip" "$FILE_PATH"
+          
+          echo "Uploading $FILENAME.zip to GoFile..."
+          RESPONSE=$(curl -F "file=@$FILENAME.zip" https://upload.gofile.io/uploadfile)
+          echo "Response: $RESPONSE"
+          
+          DOWNLOAD_URL=$(echo $RESPONSE | node -e '
+            const fs = require("fs");
+            const data = JSON.parse(fs.readFileSync(0, "utf-8"));
+            if (data.status === "ok") {
+              console.log(data.data.downloadPage);
+            } else {
+              process.exit(1);
+            }
+          ')
+          
+          if [ -z "$DOWNLOAD_URL" ]; then
+            echo "Upload failed."
+            exit 1
+          fi
+          
+          curl -H "Content-Type: application/json" -d "{\"content\": \"**Build Success!**\nTarget: linux\nDownload link: $DOWNLOAD_URL\"}" "${{ github.event.inputs.webhook }}"
