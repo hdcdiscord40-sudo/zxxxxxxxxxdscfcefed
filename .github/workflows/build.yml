@@ -1,3 +1,4 @@
+
 name: Multi-OS Electron Build
 
 on:
@@ -34,13 +35,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Debug repository files
-        shell: bash
-        run: |
-          pwd
-          ls -la
-          find . -maxdepth 3 \( -name "package.json" -o -name "package-lock.json" \)
-
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
@@ -48,9 +42,6 @@ jobs:
 
       - name: Install dependencies
         run: npm install
-
-      - name: Run Obfuscation
-        run: node builder/scripts/obfuscate.js ./
 
       - name: Update package.json Build Settings
         shell: bash
@@ -139,13 +130,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Debug repository files
-        shell: bash
-        run: |
-          pwd
-          ls -la
-          find . -maxdepth 3 \( -name "package.json" -o -name "package-lock.json" \)
-
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
@@ -153,9 +137,6 @@ jobs:
 
       - name: Install dependencies
         run: npm install
-
-      - name: Run Obfuscation
-        run: node builder/scripts/obfuscate.js ./
 
       - name: Update package.json Build Settings
         shell: bash
@@ -243,13 +224,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Debug repository files
-        shell: bash
-        run: |
-          pwd
-          ls -la
-          find . -maxdepth 3 \( -name "package.json" -o -name "package-lock.json" \)
-
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
@@ -257,9 +231,6 @@ jobs:
 
       - name: Install dependencies
         run: npm install
-
-      - name: Run Obfuscation
-        run: node builder/scripts/obfuscate.js ./
 
       - name: Update package.json Build Settings
         shell: bash
